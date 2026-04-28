@@ -94,7 +94,6 @@ python slice.py model.stl --mode demo    # Fast, low detail, no supports
 stl-to-gcode-pipeline/
 ├── repair.py        # Mesh analysis, orientation optimization, optional repair
 ├── slice.py         # G-code generation via external slicer CLI
-├── 3d_engine.py     # Shared core: mesh utilities, Blender bridge, scoring
 └── README.md
 ```
 
