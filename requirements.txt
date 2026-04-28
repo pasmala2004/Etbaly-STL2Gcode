@@ -1,4 +1,9 @@
-# Required dependencies for blender_repaire.py
+# Required dependencies for 3D mesh processing and slicing
+# Core 3D mesh processing
 numpy>=1.20.0        # Numerical computing library (used by trimesh)
 trimesh>=3.9.0       # 3D mesh processing library (STL/OBJ loading and manipulation)
 scipy>=1.7.0         # Scientific computing library (used by trimesh for spatial operations)
+
+# Optional but recommended
+# Blender (external tool) - for advanced mesh repair (blender_repaire.py)
+# PrusaSlicer (external tool) - for G-code generation (slicer.py)
