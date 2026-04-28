@@ -1,0 +1,4 @@
+# Required dependencies for blender_repaire.py
+numpy>=1.20.0        # Numerical computing library (used by trimesh)
+trimesh>=3.9.0       # 3D mesh processing library (STL/OBJ loading and manipulation)
+scipy>=1.7.0         # Scientific computing library (used by trimesh for spatial operations)
