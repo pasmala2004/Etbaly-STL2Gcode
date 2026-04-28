@@ -29,7 +29,7 @@ This project automates the steps between a raw STL model and a print-ready G-cod
   |------|---------|-------|----------|
   | `heavy` | High | Slow | Full |
   | `normal` | Balanced | Medium | Standard |
-  | `demo` | Low | Fast | None |
+  | `demo` | Low | Fast | Standard |
 
 ---
 
