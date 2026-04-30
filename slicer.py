@@ -163,19 +163,25 @@ def slice_stl(
     if extra_args:
         base_cmd += extra_args
 
-    # Scale the model (useful for tiny STL files)
-    if scale:
-        base_cmd += ["--scale", str(scale)]
-
-    def _run_with(additional_args: list[str] | None = None):
+    def _run_with(additional_args: list[str] | None = None, scale_override: float | None = None):
         cmd = list(base_cmd)
+        if scale_override:
+            cmd += ["--scale", str(scale_override)]
         if additional_args:
             cmd += additional_args
         cmd.append(stl_path)  # input file must come last
         print(f"Running: {' '.join(cmd)}\n")
         return subprocess.run(cmd, capture_output=True, text=True)
 
-    result = _run_with()
+    def _outside_print_volume(run_result: subprocess.CompletedProcess) -> bool:
+        combined = ((run_result.stdout or "") + "\n" + (run_result.stderr or "")).lower()
+        return (
+            "outside of the print volume" in combined
+            or "no outline can be derived for object" in combined
+        )
+
+    active_scale = float(scale) if scale else None
+    result = _run_with(scale_override=active_scale)
 
     if result.returncode != 0 and "no extrusions in the first layer" in (result.stderr or "").lower():
         print(
@@ -185,15 +191,44 @@ def slice_stl(
 
         # Retry 1: force bed placement + brim to create first-layer material.
         retry_args = ["--ensure-on-bed", "--brim-width", "8"]
-        retry = _run_with(retry_args)
+        retry = _run_with(retry_args, scale_override=active_scale)
         if retry.returncode == 0:
             result = retry
         elif "unknown option" not in (retry.stderr or "").lower():
             # Retry 2: add raft as a fallback for point-contact geometries.
             retry2_args = retry_args + ["--raft-layers", "1"]
-            retry2 = _run_with(retry2_args)
+            retry2 = _run_with(retry2_args, scale_override=active_scale)
             if retry2.returncode == 0:
                 result = retry2
+
+    # If object is outside print volume, retry with progressively smaller scale.
+    if _outside_print_volume(result):
+        print(
+            "[WARN] Model is outside print volume. Retrying with reduced scale...",
+            file=sys.stderr,
+        )
+        scale_trials: list[float] = []
+        if active_scale is not None:
+            trial = active_scale
+        else:
+            trial = 1.0
+
+        for _ in range(5):
+            trial *= 0.8
+            if trial < 0.05:
+                break
+            scale_trials.append(round(trial, 6))
+
+        for trial_scale in scale_trials:
+            retry = _run_with(scale_override=trial_scale)
+            if retry.stdout:
+                print(retry.stdout)
+            if retry.stderr:
+                print(retry.stderr, file=sys.stderr)
+            if retry.returncode == 0 and os.path.isfile(output_path):
+                print(f"[OK] Auto-fit scale succeeded at {trial_scale}x")
+                result = retry
+                break
 
     if result.stdout:
         print(result.stdout)
@@ -207,6 +242,11 @@ def slice_stl(
         )
 
     if not os.path.isfile(output_path):
+        if _outside_print_volume(result):
+            raise RuntimeError(
+                "PrusaSlicer reports the model is outside print volume and no G-code was generated. "
+                "Try a smaller --scale value or repair/orient the mesh first."
+            )
         raise RuntimeError(
             f"PrusaSlicer finished but G-code file not found at: {output_path}"
         )
@@ -254,8 +294,8 @@ def main():
     )
     # Scale factor (important for tiny models!)
     parser.add_argument(
-        "--scale", type=float, default=50,
-        help="Scale model by this factor (e.g., 100 for 100x放大)"
+        "--scale", type=float, default=1.0,
+        help="Scale model by this factor (default: 1.0 = original size)"
     )
     # Override specific profiles
     parser.add_argument(

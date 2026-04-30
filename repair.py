@@ -85,6 +85,45 @@ def optimize_orientation(mesh, overhang_angle_deg=45.0):
     return best_mesh, best_angles, best_score
 
 
+def place_on_bed(mesh, bed_sink_mm=0.02):
+    """Center in XY and place mesh on bed in Z."""
+    placed = mesh.copy()
+    center_xy = placed.bounding_box.centroid[:2]
+    placed.apply_translation([-float(center_xy[0]), -float(center_xy[1]), 0.0])
+    z_min = float(placed.bounds[0][2])
+    placed.apply_translation([0.0, 0.0, -z_min - bed_sink_mm])
+    return placed
+
+
+def fit_mesh_to_print_volume(mesh, bed_x, bed_y, bed_z, allow_upscale=False):
+    """
+    Scale mesh to fit printer volume.
+    Returns (fitted_mesh, scale_used, was_scaled).
+    """
+    if bed_x <= 0 or bed_y <= 0 or bed_z <= 0:
+        raise ValueError("Print volume dimensions must be > 0.")
+
+    fitted = mesh.copy()
+    extents = fitted.extents
+    sx = float(bed_x) / max(float(extents[0]), 1e-9)
+    sy = float(bed_y) / max(float(extents[1]), 1e-9)
+    sz = float(bed_z) / max(float(extents[2]), 1e-9)
+    scale_to_fit = min(sx, sy, sz)
+
+    if not allow_upscale:
+        scale_to_fit = min(scale_to_fit, 1.0)
+
+    if scale_to_fit <= 0:
+        raise ValueError("Computed invalid scale for print volume fit.")
+
+    was_scaled = abs(scale_to_fit - 1.0) > 1e-12
+    if was_scaled:
+        fitted.apply_scale(scale_to_fit)
+
+    fitted = place_on_bed(fitted)
+    return fitted, scale_to_fit, was_scaled
+
+
 def load_mesh(path):
     mesh = trimesh.load(path)
     if isinstance(mesh, trimesh.Scene):
@@ -116,7 +155,7 @@ def resize_mesh(mesh, scale_factor=1.0, target_max_dim=None):
     return resized
 
 
-def evaluate_printability(mesh, support_score, max_support_score=250.0):
+def evaluate_printability(mesh, support_score, max_support_score=400.0):
     """
     Simple printability check:
     - must have faces
@@ -169,8 +208,38 @@ def main():
     parser.add_argument(
         "--printable-threshold",
         type=float,
+        default=400.0,
+        help="Max support score considered printable (default: 400.0)",
+    )
+    parser.add_argument(
+        "--auto-fit-bed",
+        action="store_true",
+        default=True,
+        help="Automatically scale down model to fit printer volume (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-auto-fit-bed",
+        dest="auto_fit_bed",
+        action="store_false",
+        help="Disable automatic bed fit scaling.",
+    )
+    parser.add_argument(
+        "--bed-x",
+        type=float,
+        default=220.0,
+        help="Printer X size in mm (default: 220)",
+    )
+    parser.add_argument(
+        "--bed-y",
+        type=float,
+        default=220.0,
+        help="Printer Y size in mm (default: 220)",
+    )
+    parser.add_argument(
+        "--bed-z",
+        type=float,
         default=250.0,
-        help="Max support score considered printable (default: 250.0)",
+        help="Printer Z size in mm (default: 250)",
     )
     args = parser.parse_args()
 
@@ -188,6 +257,12 @@ def main():
     mesh = load_mesh(input_path)
     mesh = resize_mesh(mesh, scale_factor=args.scale, target_max_dim=args.target_max_dim)
     oriented, angles, score = optimize_orientation(mesh, args.overhang_angle)
+    fit_scale = 1.0
+    fit_scaled = False
+    if args.auto_fit_bed:
+        oriented, fit_scale, fit_scaled = fit_mesh_to_print_volume(
+            oriented, bed_x=args.bed_x, bed_y=args.bed_y, bed_z=args.bed_z
+        )
     oriented.export(output_path)
     printable, reasons = evaluate_printability(
         oriented, score, max_support_score=args.printable_threshold
@@ -200,6 +275,14 @@ def main():
         print(f"[OK] Resized to target max dimension: {args.target_max_dim}")
     elif args.scale != 1.0:
         print(f"[OK] Applied scale factor: {args.scale}")
+    if args.auto_fit_bed:
+        if fit_scaled:
+            print(
+                f"[OK] Auto-fit applied for bed {args.bed_x}x{args.bed_y}x{args.bed_z} mm "
+                f"(scale={fit_scale:.4f})"
+            )
+        else:
+            print(f"[OK] Model already fits bed {args.bed_x}x{args.bed_y}x{args.bed_z} mm")
     print(f"[OK] Printable: {'YES' if printable else 'NO'}")
     for reason in reasons:
         print(f"[INFO] {reason}")
